@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>pt.paradigmshift.babel</groupId>
+    <artifactId>babel-lora-protocol</artifactId>
+    <version>0.1.0</version>
+    <name>Babel LoRa Protocol</name>
+    <description>
+        Babel protocol that exposes a Waveshare SX126X LoRa HAT (driven by the
+        pt.paradigmshift.iot:babel-lora driver) as Babel requests and
+        notifications. Multiple Babel protocols can share the same radio by
+        tagging their traffic with a 16-bit application identifier — incoming
+        packets are delivered to every subscribed protocol and each one filters
+        on the application identifier it cares about.
+    </description>
+    <url>https://www.paradigmshift.pt</url>
+
+    <licenses>
+        <license>
+            <name>ParadigmShift Proprietary License</name>
+            <url>https://www.paradigmshift.pt</url>
+            <distribution>repo</distribution>
+            <comments>
+                Non-commercial use is permitted; commercial use requires a written
+                licence from ParadigmShift, Lda. See the LICENSE file for the full
+                terms.
+            </comments>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>João Brilha</name>
+            <email>joao.brilha@paradigmshift.pt</email>
+            <organization>ParadigmShift, Lda</organization>
+            <organizationUrl>https://www.paradigmshift.pt</organizationUrl>
+        </developer>
+        <developer>
+            <name>João Leitão</name>
+            <email>jc.leitao@fct.unl.pt</email>
+            <url>https://asc.di.fct.unl.pt/~jleitao</url>
+        </developer>
+        <developer>
+            <name>ParadigmShift</name>
+            <email>info@paradigmshift.pt</email>
+            <organization>ParadigmShift, Lda</organization>
+            <organizationUrl>https://www.paradigmshift.pt</organizationUrl>
+        </developer>
+    </developers>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <babel.core.version>1.0.0</babel.core.version>
+        <babel.lora.driver.version>0.2.0</babel.lora.driver.version>
+    </properties>
+
+    <build>
+        <sourceDirectory>src/main/java</sourceDirectory>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.12.1</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <source>17</source>
+                    <doclint>none</doclint>
+                    <quiet>true</quiet>
+                    <windowtitle>Babel LoRa Protocol API</windowtitle>
+                    <doctitle>Babel LoRa Protocol ${project.version} API</doctitle>
+                    <bottom>
+                        Copyright &amp;copy; 2026 ParadigmShift. All rights reserved.
+                        See LICENSE for terms of use.
+                    </bottom>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <distributionManagement>
+        <repository>
+            <id>paradigmshift-repository</id>
+            <url>https://maven.paradigmshift.pt/releases</url>
+        </repository>
+        <snapshotRepository>
+            <id>paradigmshift-repository</id>
+            <url>https://maven.paradigmshift.pt/snapshots</url>
+        </snapshotRepository>
+    </distributionManagement>
+
+    <repositories>
+        <repository>
+            <id>paradigmshift-repository</id>
+            <name>ParadigmShift Repository</name>
+            <url>https://maven.paradigmshift.pt/releases</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>pt.paradigmshift.babel</groupId>
+            <artifactId>babel-core</artifactId>
+            <version>${babel.core.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>pt.paradigmshift.iot</groupId>
+            <artifactId>babel-lora</artifactId>
+            <version>${babel.lora.driver.version}</version>
+        </dependency>
+    </dependencies>
+
+</project>
