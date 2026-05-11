@@ -17,26 +17,32 @@ gateway can share a single Waveshare SX126X (EByte E22-900T22S) radio.
 
 LoRa is a single half-duplex broadcast medium. To let multiple protocols share
 it without stepping on each other, every send/broadcast request is tagged with
-a 16-bit `appId` (by convention the sender's Babel protocol id). On the wire,
-this protocol prepends two bytes inside the `LoRaPacket` payload:
+the sender's 16-bit `sourceProto` (its Babel `PROTOCOL_ID`). On the wire, this
+protocol prepends two bytes inside the `LoRaPacket` payload:
 
 ```
-[ 2 bytes app_id (big-endian) ][ user payload ... ]
+[ 2 bytes sourceProto (big-endian) ][ user payload ... ]
 ```
 
 Inbound packets are delivered to every protocol that subscribed to
-`LoRaPacketReceivedNotification`; each one filters by its own `appId`:
+`LoRaPacketReceivedNotification`; each one filters by its own `PROTOCOL_ID`:
 
 ```java
 subscribeNotification(LoRaPacketReceivedNotification.NOTIFICATION_ID, (n, src) -> {
-    if (n.getAppId() != MY_PROTO_ID) return;
+    if (n.getSourceProto() != MY_PROTOCOL_ID) return;
     handlePeerMessage(n.getOriginAddress(), n.getPayload(), n.getRssi());
 });
 ```
 
+`sourceProto` here is the *remote* sender's protocol id, carried in the wire
+envelope — distinct from the local `sourceProto` parameter Babel passes to
+every handler (which is always `LoRaProtocol.PROTOCOL_ID` for these
+notifications). The naming mirrors `BabelMessage.getSourceProto()`, which
+plays the same role for in-process messages.
+
 This is the standard Babel pub/sub model — no new dispatch table on top, no
 shared mutable state, no ordering surprises. Anyone wanting to use the radio
-just `sendRequest(...)` with their own `appId`.
+just `sendRequest(...)` with their own `PROTOCOL_ID` as `sourceProto`.
 
 ---
 
@@ -52,7 +58,7 @@ just `sendRequest(...)` with their own `appId`.
 The protocol itself registers as id `1100`.
 
 `MAX_USER_PAYLOAD_BYTES = 230` (= 240 B E22 buffer − 8 B `LoRaPacket` header − 2 B
-`appId` envelope). Requests with a larger payload trigger `LoRaSendFailedNotification`.
+`sourceProto` envelope). Requests with a larger payload trigger `LoRaSendFailedNotification`.
 
 ---
 
@@ -125,21 +131,21 @@ public class MyMeshProtocol extends GenericProtocol {
     }
 
     private void onLoRaIn(LoRaPacketReceivedNotification n, short src) {
-        if (n.getAppId() != PROTOCOL_ID) return;   // not for us
+        if (n.getSourceProto() != PROTOCOL_ID) return;   // not for us
         handleGossip(n.getOriginAddress(), n.getPayload(), n.getRssi());
     }
 
     private void onLoRaFail(LoRaSendFailedNotification n, short src) {
-        if (n.getAppId() != PROTOCOL_ID) return;
+        if (n.getSourceProto() != PROTOCOL_ID) return;
         logger.warn("LoRa send failed to 0x{}: {}",
                     String.format("%04X", n.getDestAddress()), n.getReason());
     }
 }
 ```
 
-Two unrelated protocols can coexist with no further coordination — they pick
-distinct `appId` values (their own `PROTOCOL_ID` is the obvious choice), filter
-in their handlers, and ignore the rest.
+Two unrelated protocols can coexist with no further coordination — they stamp
+their own `PROTOCOL_ID` as `sourceProto` on every send, filter on
+`n.getSourceProto()` in their handlers, and ignore the rest.
 
 ---
 

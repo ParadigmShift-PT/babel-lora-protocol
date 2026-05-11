@@ -20,18 +20,17 @@ import java.util.Properties;
  * same gateway to share a single LoRa radio.
  *
  * <h2>How sharing works</h2>
- * <p>Each sender stamps its traffic with a 16-bit {@code appId} on
+ * <p>Each sender stamps its outbound traffic with its own 16-bit
+ * {@code sourceProto} (its {@code PROTOCOL_ID}) on
  * {@link SendLoRaPacketRequest} / {@link BroadcastLoRaRequest}; the protocol
  * prepends a two-byte big-endian envelope to the LoRa payload so the receiver
  * side can recover that identifier. On reception, every subscriber of
  * {@link LoRaPacketReceivedNotification} sees every packet — each protocol
- * filters by its own {@code appId}. The convention is to use the subscribing
- * protocol's numeric id as the {@code appId}, but any disjoint allocation
- * works.
+ * filters by checking {@code n.getSourceProto() == MY_PROTOCOL_ID}.
  *
  * <h2>Wire format inside the LoRa payload</h2>
  * <pre>
- *   [ 2 bytes app_id (big-endian) ][ user payload ... ]
+ *   [ 2 bytes sourceProto (big-endian) ][ user payload ... ]
  * </pre>
  *
  * <h2>Lifecycle</h2>
@@ -51,13 +50,13 @@ public class LoRaProtocol extends GenericProtocol {
     /**
      * Maximum user payload (in bytes) accepted by send/broadcast requests.
      * Derived from the default E22 buffer size (240 B), minus the 8-byte
-     * {@link LoRaPacket} header and the 2-byte app-id envelope this protocol
-     * adds.
+     * {@link LoRaPacket} header and the 2-byte sourceProto envelope this
+     * protocol adds.
      */
     public static final int MAX_USER_PAYLOAD_BYTES = 230;
 
     private static final int BROADCAST_ADDR = 0xFFFF;
-    private static final int APP_ID_ENVELOPE_BYTES = 2;
+    private static final int SOURCE_PROTO_ENVELOPE_BYTES = 2;
 
     private final LoRaHAT hat;
     private final int ownAddress;
@@ -85,24 +84,24 @@ public class LoRaProtocol extends GenericProtocol {
     }
 
     private void uponSendRequest(SendLoRaPacketRequest req, short sourceProto) {
-        transmit(req.getDestAddress(), req.getAppId(), req.getPayload());
+        transmit(req.getDestAddress(), req.getSourceProto(), req.getPayload());
     }
 
     private void uponBroadcastRequest(BroadcastLoRaRequest req, short sourceProto) {
-        transmit(BROADCAST_ADDR, req.getAppId(), req.getPayload());
+        transmit(BROADCAST_ADDR, req.getSourceProto(), req.getPayload());
     }
 
-    private void transmit(int destAddress, short appId, byte[] payload) {
+    private void transmit(int destAddress, short sourceProto, byte[] payload) {
         if (payload.length > MAX_USER_PAYLOAD_BYTES) {
-            triggerNotification(new LoRaSendFailedNotification(appId, destAddress,
+            triggerNotification(new LoRaSendFailedNotification(sourceProto, destAddress,
                     "Payload " + payload.length + "B exceeds MTU " + MAX_USER_PAYLOAD_BYTES + "B"));
             return;
         }
 
-        byte[] enveloped = new byte[APP_ID_ENVELOPE_BYTES + payload.length];
-        enveloped[0] = (byte) ((appId >> 8) & 0xFF);
-        enveloped[1] = (byte) (appId & 0xFF);
-        System.arraycopy(payload, 0, enveloped, APP_ID_ENVELOPE_BYTES, payload.length);
+        byte[] enveloped = new byte[SOURCE_PROTO_ENVELOPE_BYTES + payload.length];
+        enveloped[0] = (byte) ((sourceProto >> 8) & 0xFF);
+        enveloped[1] = (byte) (sourceProto & 0xFF);
+        System.arraycopy(payload, 0, enveloped, SOURCE_PROTO_ENVELOPE_BYTES, payload.length);
 
         try {
             LoRaPacket packet = new LoRaPacket.Builder()
@@ -113,24 +112,24 @@ public class LoRaProtocol extends GenericProtocol {
                     .build();
             hat.transmit(packet);
         } catch (Exception e) {
-            logger.warn("LoRa transmit failed for appId={} dest=0x{}: {}",
-                        appId, String.format("%04X", destAddress), e.toString());
-            triggerNotification(new LoRaSendFailedNotification(appId, destAddress, e.toString()));
+            logger.warn("LoRa transmit failed for sourceProto={} dest=0x{}: {}",
+                        sourceProto, String.format("%04X", destAddress), e.toString());
+            triggerNotification(new LoRaSendFailedNotification(sourceProto, destAddress, e.toString()));
         }
     }
 
     private void deliverIncoming(LoRaPacket packet) {
         byte[] enveloped = packet.getPayload();
-        if (enveloped == null || enveloped.length < APP_ID_ENVELOPE_BYTES) {
+        if (enveloped == null || enveloped.length < SOURCE_PROTO_ENVELOPE_BYTES) {
             // Foreign sender that doesn't speak our envelope — silently drop.
             return;
         }
-        short appId = (short) (((enveloped[0] & 0xFF) << 8) | (enveloped[1] & 0xFF));
-        byte[] payload = new byte[enveloped.length - APP_ID_ENVELOPE_BYTES];
-        System.arraycopy(enveloped, APP_ID_ENVELOPE_BYTES, payload, 0, payload.length);
+        short sourceProto = (short) (((enveloped[0] & 0xFF) << 8) | (enveloped[1] & 0xFF));
+        byte[] payload = new byte[enveloped.length - SOURCE_PROTO_ENVELOPE_BYTES];
+        System.arraycopy(enveloped, SOURCE_PROTO_ENVELOPE_BYTES, payload, 0, payload.length);
 
         triggerNotification(new LoRaPacketReceivedNotification(
-                appId,
+                sourceProto,
                 packet.getOriginAddr(),
                 packet.getPrevHopAddr(),
                 packet.getDestAddr(),

@@ -4,28 +4,28 @@ import pt.unl.fct.di.novasys.babel.generic.ProtoRequest;
 
 /**
  * Asks the LoRa protocol to broadcast a payload to every LoRa peer in range
- * (destination address {@code 0xFFFF}). Tag the request with an {@code appId}
- * (commonly the sender protocol id) so receiving protocols can demultiplex the
- * traffic.
+ * (destination address {@code 0xFFFF}). Tag the request with the sending
+ * protocol's {@code sourceProto} ({@code PROTOCOL_ID}) so receiving protocols
+ * can demultiplex the traffic.
  */
 public class BroadcastLoRaRequest extends ProtoRequest {
 
     public static final short REQUEST_ID = 1101;
 
-    private final short appId;
+    private final short sourceProto;
     private final byte[] payload;
 
     /**
-     * @param appId   application identifier (commonly the sender protocol id)
-     * @param payload bytes to transmit; must fit within the LoRa MTU
+     * @param sourceProto numeric ID of the sending protocol ({@code PROTOCOL_ID})
+     * @param payload     bytes to transmit; must fit within the LoRa MTU
      */
-    public BroadcastLoRaRequest(short appId, byte[] payload) {
+    public BroadcastLoRaRequest(short sourceProto, byte[] payload) {
         super(REQUEST_ID);
-        this.appId = appId;
+        this.sourceProto = sourceProto;
         this.payload = payload;
     }
 
-    public short getAppId() { return appId; }
+    public short getSourceProto() { return sourceProto; }
 
     public byte[] getPayload() { return payload; }
 }
