@@ -6,7 +6,7 @@
 
     <groupId>pt.paradigmshift.babel</groupId>
     <artifactId>babel-lora-protocol</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
     <name>Babel LoRa Protocol</name>
     <description>
         Babel protocol that exposes a Waveshare SX126X LoRa HAT (driven by the
@@ -54,7 +54,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <babel.core.version>1.0.0</babel.core.version>
-        <babel.lora.driver.version>0.2.0</babel.lora.driver.version>
+        <babel.lora.driver.version>0.2.2</babel.lora.driver.version>
     </properties>
 
     <build>

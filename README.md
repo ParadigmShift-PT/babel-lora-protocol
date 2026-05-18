@@ -7,8 +7,8 @@ gateway can share a single Waveshare SX126X (EByte E22-900T22S) radio.
 
 **Group ID:** `pt.paradigmshift.babel`
 **Artifact ID:** `babel-lora-protocol`
-**Current version:** `0.1.0`
-**Tested with:** `pt.paradigmshift.iot:babel-lora:0.2.0` driver and
+**Current version:** `0.1.1`
+**Tested with:** `pt.paradigmshift.iot:babel-lora:0.2.2` driver and
 `pt.paradigmshift.babel:babel-core:1.0.0`.
 
 ---
