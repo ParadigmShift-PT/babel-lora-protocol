@@ -7,9 +7,14 @@ gateway can share a single Waveshare SX126X (EByte E22-900T22S) radio.
 
 **Group ID:** `pt.paradigmshift.babel`
 **Artifact ID:** `babel-lora-protocol`
-**Current version:** `0.1.1`
-**Tested with:** `pt.paradigmshift.iot:babel-lora:0.2.2` driver and
+**Current version:** `0.2.0`
+**Tested with:** `pt.paradigmshift.iot:babel-lora:0.2.2` driver,
+`pt.paradigmshift.babel:babel-radio-api:0.1.0`, and
 `pt.paradigmshift.babel:babel-core:1.0.0`.
+
+> **0.2.0 is a breaking release.** The request and notification types moved
+> to the shared `babel-radio-api` library and the destination type changed
+> from `int` to `LoRaAddress`. See *Migration* below.
 
 ---
 
@@ -25,12 +30,18 @@ protocol prepends two bytes inside the `LoRaPacket` payload:
 ```
 
 Inbound packets are delivered to every protocol that subscribed to
-`LoRaPacketReceivedNotification`; each one filters by its own `PROTOCOL_ID`:
+`RadioPacketReceivedNotification`; each one filters by its own `PROTOCOL_ID`.
+The LoRa protocol emits a subclass — `LoRaPacketReceivedNotification` —
+carrying the LoRa-specific extras (previous hop, destination, channel,
+RSSI). Generic subscribers see only the base type; LoRa-aware subscribers
+cast to the subclass:
 
 ```java
-subscribeNotification(LoRaPacketReceivedNotification.NOTIFICATION_ID, (n, src) -> {
+subscribeNotification(RadioPacketReceivedNotification.NOTIFICATION_ID, (n, src) -> {
     if (n.getSourceProto() != MY_PROTOCOL_ID) return;
-    handlePeerMessage(n.getOriginAddress(), n.getPayload(), n.getRssi());
+    if (n instanceof LoRaPacketReceivedNotification lo) {
+        handlePeerMessage(lo.getLoRaOrigin(), lo.getPayload(), lo.getRssi());
+    }
 });
 ```
 
@@ -48,17 +59,26 @@ just `sendRequest(...)` with their own `PROTOCOL_ID` as `sourceProto`.
 
 ## Request / notification surface
 
-| Type | ID | Purpose |
-|---|---|---|
-| `SendLoRaPacketRequest`         | `1100` (request)      | Unicast a payload to a specific 16-bit LoRa address |
-| `BroadcastLoRaRequest`          | `1101` (request)      | Broadcast a payload (dest = `0xFFFF`) |
-| `LoRaPacketReceivedNotification`| `1100` (notification) | One per received packet — fan-out to every subscriber |
-| `LoRaSendFailedNotification`    | `1101` (notification) | MTU exceeded, or the driver threw on transmit |
+The request and notification types live in **`babel-radio-api`** and are
+shared with every other radio Babel protocol. The protocol-specific bit is
+the `LoRaAddress` (an extension of `RadioAddress` wrapping a 16-bit on-air
+address) and the `LoRaPacketReceivedNotification` subclass.
 
-The protocol itself registers as id `1100`.
+| Type | Origin | ID | Purpose |
+|---|---|---|---|
+| `SendRadioPacketRequest`          | `babel-radio-api`        | `100` (request)      | Unicast a payload — `destination` is a `LoRaAddress` |
+| `BroadcastRadioPacketRequest`     | `babel-radio-api`        | `101` (request)      | Broadcast a payload (LoRa NWK `0xFFFF`) |
+| `RadioPacketReceivedNotification` | `babel-radio-api`        | `100` (notification) | Generic inbound packet — emitted as `LoRaPacketReceivedNotification` (subclass) carrying RSSI / prevHop / destination / channel |
+| `RadioSendFailedNotification`     | `babel-radio-api`        | `101` (notification) | MTU exceeded, wrong-radio destination, or driver throw |
+| `LoRaAddress`                     | `babel-lora-protocol`    | —                    | 16-bit LoRa on-air address; `RadioAddress` subclass |
 
-`MAX_USER_PAYLOAD_BYTES = 230` (= 240 B E22 buffer − 8 B `LoRaPacket` header − 2 B
-`sourceProto` envelope). Requests with a larger payload trigger `LoRaSendFailedNotification`.
+The protocol itself registers as id `1100`. Routing from generic
+application code is one call: `addr.owningProtocolId()` returns `1100` for
+any `LoRaAddress`.
+
+`MAX_USER_PAYLOAD_BYTES = 230` (= 240 B E22 buffer − 8 B `LoRaPacket` header
+− 2 B `sourceProto` envelope). Requests with a larger payload trigger
+`RadioSendFailedNotification`.
 
 ---
 
@@ -79,13 +99,14 @@ Add to your `pom.xml`:
     <dependency>
         <groupId>pt.paradigmshift.babel</groupId>
         <artifactId>babel-lora-protocol</artifactId>
-        <version>0.1.0</version>
+        <version>0.2.0</version>
     </dependency>
 </dependencies>
 ```
 
-This artifact pulls in `pt.paradigmshift.iot:babel-lora` (the driver) and
-`pt.paradigmshift.babel:babel-core` transitively.
+This artifact pulls in `pt.paradigmshift.iot:babel-lora` (the driver),
+`pt.paradigmshift.babel:babel-radio-api` (the shared request/notification
+types), and `pt.paradigmshift.babel:babel-core` transitively.
 
 ### Wiring it up in `Main`
 
@@ -122,23 +143,32 @@ public class MyMeshProtocol extends GenericProtocol {
 
     public MyMeshProtocol() throws HandlerRegistrationException {
         super("MyMesh", PROTOCOL_ID);
-        subscribeNotification(LoRaPacketReceivedNotification.NOTIFICATION_ID, this::onLoRaIn);
-        subscribeNotification(LoRaSendFailedNotification.NOTIFICATION_ID,    this::onLoRaFail);
+        subscribeNotification(RadioPacketReceivedNotification.NOTIFICATION_ID, this::onRadioIn);
+        subscribeNotification(RadioSendFailedNotification.NOTIFICATION_ID,     this::onRadioFail);
     }
 
     private void gossip(byte[] payload) {
-        sendRequest(new BroadcastLoRaRequest(PROTOCOL_ID, payload), LoRaProtocol.PROTOCOL_ID);
+        sendRequest(new BroadcastRadioPacketRequest(PROTOCOL_ID, payload),
+                    LoRaProtocol.PROTOCOL_ID);
     }
 
-    private void onLoRaIn(LoRaPacketReceivedNotification n, short src) {
-        if (n.getSourceProto() != PROTOCOL_ID) return;   // not for us
-        handleGossip(n.getOriginAddress(), n.getPayload(), n.getRssi());
+    private void unicast(LoRaAddress peer, byte[] payload) {
+        // Radio-agnostic routing: the address knows which protocol owns it.
+        sendRequest(new SendRadioPacketRequest(PROTOCOL_ID, peer, payload),
+                    peer.owningProtocolId());
     }
 
-    private void onLoRaFail(LoRaSendFailedNotification n, short src) {
+    private void onRadioIn(RadioPacketReceivedNotification n, short src) {
+        if (n.getSourceProto() != PROTOCOL_ID) return;             // not for us
+        if (src != LoRaProtocol.PROTOCOL_ID) return;               // not LoRa
+        LoRaPacketReceivedNotification lo = (LoRaPacketReceivedNotification) n;
+        handleGossip(lo.getLoRaOrigin(), lo.getPayload(), lo.getRssi());
+    }
+
+    private void onRadioFail(RadioSendFailedNotification n, short src) {
         if (n.getSourceProto() != PROTOCOL_ID) return;
-        logger.warn("LoRa send failed to 0x{}: {}",
-                    String.format("%04X", n.getDestAddress()), n.getReason());
+        logger.warn("Radio send failed to {}: {}",
+                    n.getDestination(), n.getReason());
     }
 }
 ```
@@ -146,6 +176,15 @@ public class MyMeshProtocol extends GenericProtocol {
 Two unrelated protocols can coexist with no further coordination — they stamp
 their own `PROTOCOL_ID` as `sourceProto` on every send, filter on
 `n.getSourceProto()` in their handlers, and ignore the rest.
+
+### Migration from 0.1.x
+
+| 0.1.x type | 0.2.0 replacement |
+|---|---|
+| `SendLoRaPacketRequest(sp, int dest, payload)` | `SendRadioPacketRequest(sp, new LoRaAddress(dest), payload)` |
+| `BroadcastLoRaRequest(sp, payload)` | `BroadcastRadioPacketRequest(sp, payload)` |
+| `LoRaPacketReceivedNotification` | still exists, but now `extends RadioPacketReceivedNotification`; subscribe to `RadioPacketReceivedNotification.NOTIFICATION_ID` and `instanceof`-cast to access RSSI / prevHop / etc. Inbound-address accessors return `LoRaAddress` (no longer `int`). |
+| `LoRaSendFailedNotification` | `RadioSendFailedNotification`; destination is a `RadioAddress` (cast to `LoRaAddress` if you need the numeric value) |
 
 ---
 
