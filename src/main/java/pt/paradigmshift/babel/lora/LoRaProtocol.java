@@ -40,6 +40,14 @@ import java.util.Properties;
  * Pi-touching protocols). Build and initialise the HAT first, then
  * construct the protocol with that HAT. {@link #init(Properties)} only
  * wires the inbound callback — the radio is already running by then.
+ *
+ * <h2>Identifiers</h2>
+ * <p><b>Protocol ID:</b> {@value #PROTOCOL_ID}.
+ * <p>This protocol uses the shared {@code babel-radio-api} event surface — its
+ * inbound packet notification ({@link LoRaPacketReceivedNotification},
+ * subclass of {@link pt.paradigmshift.babel.radio.notifications.RadioPacketReceivedNotification})
+ * inherits {@code NOTIFICATION_ID = 401} from the radio-api's reserved slot 400.
+ * The protocol declares no own event IDs.
  */
 public class LoRaProtocol extends GenericProtocol {
 

@@ -7,14 +7,20 @@ gateway can share a single Waveshare SX126X (EByte E22-900T22S) radio.
 
 **Group ID:** `pt.paradigmshift.babel`
 **Artifact ID:** `babel-lora-protocol`
-**Current version:** `0.2.0`
+**Current version:** `0.3.0`
 **Tested with:** `pt.paradigmshift.iot:babel-lora:0.2.2` driver,
-`pt.paradigmshift.babel:babel-radio-api:0.1.0`, and
+`pt.paradigmshift.babel:babel-radio-api:0.2.0`, and
 `pt.paradigmshift.babel:babel-core:1.0.0`.
 
-> **0.2.0 is a breaking release.** The request and notification types moved
-> to the shared `babel-radio-api` library and the destination type changed
-> from `int` to `LoRaAddress`. See *Migration* below.
+> **0.3.0 is a breaking release.** It bumps the transitive
+> `babel-radio-api` dependency to `0.2.0`, which renumbered the shared
+> radio events into the reserved slot `400` (was `100`/`101`). Subscribers
+> recompile against the new IDs; no API names change. See the *Identifiers*
+> section below and the `babel-radio-api` 0.2.0 release notes.
+
+> **0.2.0** was the earlier breaking release that moved the request and
+> notification types to the shared `babel-radio-api` library and changed
+> the destination type from `int` to `LoRaAddress`. See *Migration*.
 
 ---
 
@@ -57,24 +63,27 @@ just `sendRequest(...)` with their own `PROTOCOL_ID` as `sourceProto`.
 
 ---
 
-## Request / notification surface
+## Protocol & event identifiers
 
-The request and notification types live in **`babel-radio-api`** and are
-shared with every other radio Babel protocol. The protocol-specific bit is
-the `LoRaAddress` (an extension of `RadioAddress` wrapping a 16-bit on-air
-address) and the `LoRaPacketReceivedNotification` subclass.
+Follows the ParadigmShift workspace Babel ID convention: protocols at
+100-multiples, events numbered `protocol_id + N` per handler class. This
+protocol owns slot `1100`; its only own notification class is
+`LoRaPacketReceivedNotification`, which inherits its ID from the shared
+`babel-radio-api` reserved slot `400` instead of being numbered under
+`1100` — every radio in the workspace points to the same shared event so
+multi-radio subscribers can register one handler.
 
-| Type | Origin | ID | Purpose |
-|---|---|---|---|
-| `SendRadioPacketRequest`          | `babel-radio-api`        | `100` (request)      | Unicast a payload — `destination` is a `LoRaAddress` |
-| `BroadcastRadioPacketRequest`     | `babel-radio-api`        | `101` (request)      | Broadcast a payload (LoRa NWK `0xFFFF`) |
-| `RadioPacketReceivedNotification` | `babel-radio-api`        | `100` (notification) | Generic inbound packet — emitted as `LoRaPacketReceivedNotification` (subclass) carrying RSSI / prevHop / destination / channel |
-| `RadioSendFailedNotification`     | `babel-radio-api`        | `101` (notification) | MTU exceeded, wrong-radio destination, or driver throw |
-| `LoRaAddress`                     | `babel-lora-protocol`    | —                    | 16-bit LoRa on-air address; `RadioAddress` subclass |
+| Type | Origin | Handler class | ID | Purpose |
+|---|---|---|---|---|
+| `LoRaProtocol`                    | `babel-lora-protocol`    | protocol      | `1100` | This protocol's `PROTOCOL_ID` |
+| `SendRadioPacketRequest`          | `babel-radio-api`        | request/reply | `401`  | Unicast a payload — `destination` is a `LoRaAddress` |
+| `BroadcastRadioPacketRequest`     | `babel-radio-api`        | request/reply | `402`  | Broadcast a payload (LoRa air-address `0xFFFF`) |
+| `RadioPacketReceivedNotification` | `babel-radio-api`        | notification  | `401`  | Generic inbound packet — emitted as `LoRaPacketReceivedNotification` (subclass) carrying RSSI / prevHop / destination / channel |
+| `RadioSendFailedNotification`     | `babel-radio-api`        | notification  | `402`  | MTU exceeded, wrong-radio destination, or driver throw |
+| `LoRaAddress`                     | `babel-lora-protocol`    | —             | —      | 16-bit LoRa on-air address; `RadioAddress` subclass (carries no event id) |
 
-The protocol itself registers as id `1100`. Routing from generic
-application code is one call: `addr.owningProtocolId()` returns `1100` for
-any `LoRaAddress`.
+Routing from generic application code is one call:
+`addr.owningProtocolId()` returns `1100` for any `LoRaAddress`.
 
 `MAX_USER_PAYLOAD_BYTES = 230` (= 240 B E22 buffer − 8 B `LoRaPacket` header
 − 2 B `sourceProto` envelope). Requests with a larger payload trigger
@@ -99,7 +108,7 @@ Add to your `pom.xml`:
     <dependency>
         <groupId>pt.paradigmshift.babel</groupId>
         <artifactId>babel-lora-protocol</artifactId>
-        <version>0.2.0</version>
+        <version>0.3.0</version>
     </dependency>
 </dependencies>
 ```
@@ -218,8 +227,8 @@ Push a version tag — CI deploys automatically (mirroring the other
 ParadigmShift Maven libs):
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 ---

@@ -19,6 +19,12 @@ import pt.paradigmshift.babel.radio.notifications.RadioPacketReceivedNotificatio
  *     int rssi = lo.getRssi();
  * }
  * }</pre>
+ *
+ * <p><b>Handler class:</b> notification. <b>ID:</b> inherited
+ * {@code NOTIFICATION_ID = 401} from
+ * {@link RadioPacketReceivedNotification} (reserved in the
+ * {@code babel-radio-api} slot 400). Owning protocol: {@link
+ * pt.paradigmshift.babel.lora.LoRaProtocol} (id 1100).
  */
 public class LoRaPacketReceivedNotification
         extends RadioPacketReceivedNotification {
