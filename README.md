@@ -27,39 +27,40 @@ gateway can share a single Waveshare SX126X (EByte E22-900T22S) radio.
 ## Multi-protocol sharing
 
 LoRa is a single half-duplex broadcast medium. To let multiple protocols share
-it without stepping on each other, every send/broadcast request is tagged with
-the sender's 16-bit `sourceProto` (its Babel `PROTOCOL_ID`). On the wire, this
-protocol prepends two bytes inside the `LoRaPacket` payload:
+it without stepping on each other, every send/broadcast request is tagged with a
+16-bit `destProto` — the id of the protocol the frame is for (by Babel's
+symmetric N↔N convention a sender passes its own `PROTOCOL_ID`). On the wire,
+this protocol prepends two bytes inside the `LoRaPacket` payload:
 
 ```
-[ 2 bytes sourceProto (big-endian) ][ user payload ... ]
+[ 2 bytes destProto (big-endian) ][ user payload ... ]
 ```
 
 Inbound packets are delivered to every protocol that subscribed to
-`RadioPacketReceivedNotification`; each one filters by its own `PROTOCOL_ID`.
-The LoRa protocol emits a subclass — `LoRaPacketReceivedNotification` —
-carrying the LoRa-specific extras (previous hop, destination, channel,
-RSSI). Generic subscribers see only the base type; LoRa-aware subscribers
-cast to the subclass:
+`RadioPacketReceivedNotification`; each one keeps only frames addressed to it
+(`getDestProto() == its PROTOCOL_ID`). The LoRa protocol emits a subclass —
+`LoRaPacketReceivedNotification` — carrying the LoRa-specific extras (previous
+hop, destination, channel, RSSI). Generic subscribers see only the base type;
+LoRa-aware subscribers cast to the subclass:
 
 ```java
 subscribeNotification(RadioPacketReceivedNotification.NOTIFICATION_ID, (n, src) -> {
-    if (n.getSourceProto() != MY_PROTOCOL_ID) return;
+    if (n.getDestProto() != MY_PROTOCOL_ID) return;   // not addressed to us
     if (n instanceof LoRaPacketReceivedNotification lo) {
         handlePeerMessage(lo.getLoRaOrigin(), lo.getPayload(), lo.getRssi());
     }
 });
 ```
 
-`sourceProto` here is the *remote* sender's protocol id, carried in the wire
-envelope — distinct from the local `sourceProto` parameter Babel passes to
-every handler (which is always `LoRaProtocol.PROTOCOL_ID` for these
-notifications). The naming mirrors `BabelMessage.getSourceProto()`, which
-plays the same role for in-process messages.
+`getDestProto()` is the destination protocol id carried in the wire envelope —
+distinct from the `src` parameter Babel passes to every handler (which here is
+always `LoRaProtocol.PROTOCOL_ID`, i.e. the delivering bridge). The field was
+named `sourceProto` before `babel-radio-api 0.4.0`; the rename makes the
+receive-side meaning (the addressee) read correctly.
 
 This is the standard Babel pub/sub model — no new dispatch table on top, no
 shared mutable state, no ordering surprises. Anyone wanting to use the radio
-just `sendRequest(...)` with their own `PROTOCOL_ID` as `sourceProto`.
+just `sendRequest(...)` with their own `PROTOCOL_ID` as `destProto`.
 
 ---
 
@@ -86,7 +87,7 @@ Routing from generic application code is one call:
 `addr.owningProtocolId()` returns `1100` for any `LoRaAddress`.
 
 `MAX_USER_PAYLOAD_BYTES = 230` (= 240 B E22 buffer − 8 B `LoRaPacket` header
-− 2 B `sourceProto` envelope). Requests with a larger payload trigger
+− 2 B `destProto` envelope). Requests with a larger payload trigger
 `RadioSendFailedNotification`.
 
 ---
@@ -168,14 +169,14 @@ public class MyMeshProtocol extends GenericProtocol {
     }
 
     private void onRadioIn(RadioPacketReceivedNotification n, short src) {
-        if (n.getSourceProto() != PROTOCOL_ID) return;             // not for us
+        if (n.getDestProto() != PROTOCOL_ID) return;               // not for us
         if (src != LoRaProtocol.PROTOCOL_ID) return;               // not LoRa
         LoRaPacketReceivedNotification lo = (LoRaPacketReceivedNotification) n;
         handleGossip(lo.getLoRaOrigin(), lo.getPayload(), lo.getRssi());
     }
 
     private void onRadioFail(RadioSendFailedNotification n, short src) {
-        if (n.getSourceProto() != PROTOCOL_ID) return;
+        if (n.getDestProto() != PROTOCOL_ID) return;
         logger.warn("Radio send failed to {}: {}",
                     n.getDestination(), n.getReason());
     }
@@ -183,8 +184,8 @@ public class MyMeshProtocol extends GenericProtocol {
 ```
 
 Two unrelated protocols can coexist with no further coordination — they stamp
-their own `PROTOCOL_ID` as `sourceProto` on every send, filter on
-`n.getSourceProto()` in their handlers, and ignore the rest.
+their own `PROTOCOL_ID` as `destProto` on every send, filter on
+`n.getDestProto()` in their handlers, and ignore the rest.
 
 ### Migration from 0.1.x
 

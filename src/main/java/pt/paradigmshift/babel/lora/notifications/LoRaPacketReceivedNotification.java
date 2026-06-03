@@ -34,14 +34,14 @@ public class LoRaPacketReceivedNotification
     private final int channel;
     private final int rssi;
 
-    public LoRaPacketReceivedNotification(short sourceProto,
+    public LoRaPacketReceivedNotification(short destProto,
                                           LoRaAddress origin,
                                           LoRaAddress prevHop,
                                           LoRaAddress destination,
                                           int channel,
                                           int rssi,
                                           byte[] payload) {
-        super(sourceProto, origin, payload);
+        super(destProto, origin, payload);
         this.prevHop = prevHop;
         this.destination = destination;
         this.channel = channel;

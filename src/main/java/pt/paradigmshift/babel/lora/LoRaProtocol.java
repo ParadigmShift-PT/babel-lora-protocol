@@ -18,13 +18,14 @@ import java.util.Properties;
  * Babel protocol that adapts a {@link LoRaHAT} driver to the shared
  * {@code babel-radio-api} request/notification surface. Multiple Babel
  * protocols on the same gateway can share a single LoRa radio by tagging
- * their outbound traffic with their own {@code sourceProto} (their
- * {@code PROTOCOL_ID}); the protocol writes those two bytes to the wire
- * and surfaces them again on inbound notifications.
+ * each frame with a 2-byte {@code destProto} — the id of the protocol the
+ * frame is for (by the symmetric N↔N convention a sender uses its own
+ * {@code PROTOCOL_ID}); the protocol writes those two bytes to the wire and
+ * surfaces them again on inbound notifications, where subscribers filter on them.
  *
  * <h2>Wire layout inside the LoRa payload</h2>
  * <pre>
- *   [ 2 bytes sourceProto (big-endian) ][ user payload ... ]
+ *   [ 2 bytes destProto (big-endian) ][ user payload ... ]
  * </pre>
  *
  * <h2>Inbound notifications</h2>
@@ -60,13 +61,13 @@ public class LoRaProtocol extends GenericProtocol {
     /**
      * Maximum user payload (in bytes) accepted by send/broadcast requests.
      * Derived from the default E22 buffer size (240 B), minus the 8-byte
-     * {@link LoRaPacket} header and the 2-byte sourceProto envelope this
+     * {@link LoRaPacket} header and the 2-byte destProto envelope this
      * protocol adds to every frame.
      */
     public static final int MAX_USER_PAYLOAD_BYTES = 230;
 
     private static final int BROADCAST_ADDR = 0xFFFF;
-    private static final int SOURCE_PROTO_BYTES = 2;
+    private static final int DEST_PROTO_BYTES = 2;
 
     private final LoRaHAT hat;
     private final LoRaAddress ownAddress;
@@ -101,34 +102,34 @@ public class LoRaProtocol extends GenericProtocol {
         RadioAddress dst = req.getDestination();
         if (!(dst instanceof LoRaAddress lora)) {
             triggerNotification(new RadioSendFailedNotification(
-                    req.getSourceProto(), dst,
+                    req.getDestProto(), dst,
                     "LoRaProtocol received non-LoRaAddress destination: "
                             + (dst == null ? "null" : dst.getClass().getName())));
             return;
         }
-        transmit(lora, req.getSourceProto(), req.getPayload());
+        transmit(lora, req.getDestProto(), req.getPayload());
     }
 
     private void uponBroadcastRequest(BroadcastRadioPacketRequest req,
                                       short ignored) {
-        transmit(new LoRaAddress(BROADCAST_ADDR), req.getSourceProto(),
+        transmit(new LoRaAddress(BROADCAST_ADDR), req.getDestProto(),
                  req.getPayload());
     }
 
-    private void transmit(LoRaAddress destination, short sourceProto,
+    private void transmit(LoRaAddress destination, short destProto,
                           byte[] payload) {
         if (payload.length > MAX_USER_PAYLOAD_BYTES) {
             triggerNotification(new RadioSendFailedNotification(
-                    sourceProto, destination,
+                    destProto, destination,
                     "Payload " + payload.length + "B exceeds MTU "
                             + MAX_USER_PAYLOAD_BYTES + "B"));
             return;
         }
 
-        byte[] enveloped = new byte[SOURCE_PROTO_BYTES + payload.length];
-        enveloped[0] = (byte) ((sourceProto >> 8) & 0xFF);
-        enveloped[1] = (byte) (sourceProto & 0xFF);
-        System.arraycopy(payload, 0, enveloped, SOURCE_PROTO_BYTES,
+        byte[] enveloped = new byte[DEST_PROTO_BYTES + payload.length];
+        enveloped[0] = (byte) ((destProto >> 8) & 0xFF);
+        enveloped[1] = (byte) (destProto & 0xFF);
+        System.arraycopy(payload, 0, enveloped, DEST_PROTO_BYTES,
                          payload.length);
 
         try {
@@ -140,27 +141,27 @@ public class LoRaProtocol extends GenericProtocol {
                     .build();
             hat.transmit(packet);
         } catch (Exception e) {
-            logger.warn("LoRa transmit failed for sourceProto={} dest={}: {}",
-                        sourceProto, destination, e.toString());
+            logger.warn("LoRa transmit failed for destProto={} dest={}: {}",
+                        destProto, destination, e.toString());
             triggerNotification(new RadioSendFailedNotification(
-                    sourceProto, destination, e.toString()));
+                    destProto, destination, e.toString()));
         }
     }
 
     private void deliverIncoming(LoRaPacket packet) {
         byte[] enveloped = packet.getPayload();
-        if (enveloped == null || enveloped.length < SOURCE_PROTO_BYTES) {
+        if (enveloped == null || enveloped.length < DEST_PROTO_BYTES) {
             // Foreign sender that doesn't speak our envelope — silently drop.
             return;
         }
-        short sourceProto = (short) (((enveloped[0] & 0xFF) << 8)
-                                     | (enveloped[1] & 0xFF));
-        byte[] payload = new byte[enveloped.length - SOURCE_PROTO_BYTES];
-        System.arraycopy(enveloped, SOURCE_PROTO_BYTES, payload, 0,
+        short destProto = (short) (((enveloped[0] & 0xFF) << 8)
+                                   | (enveloped[1] & 0xFF));
+        byte[] payload = new byte[enveloped.length - DEST_PROTO_BYTES];
+        System.arraycopy(enveloped, DEST_PROTO_BYTES, payload, 0,
                          payload.length);
 
         triggerNotification(new LoRaPacketReceivedNotification(
-                sourceProto,
+                destProto,
                 new LoRaAddress(packet.getOriginAddr()),
                 new LoRaAddress(packet.getPrevHopAddr()),
                 new LoRaAddress(packet.getDestAddr()),
