@@ -70,19 +70,26 @@ public class LoRaProtocol extends GenericProtocol {
     public static final short PROTOCOL_ID = 1100;
 
     /**
-     * Radio-payload capacity of a single LoRa frame, in bytes: the default E22
-     * buffer (240 B) minus the 8-byte {@link LoRaPacket} header. A message
-     * whose enveloped form ([destProto][payload]) exceeds this is transparently
-     * fragmented; one that fits is sent verbatim.
+     * Radio-payload capacity of a single LoRa frame, in bytes: the usable E22
+     * frame (237 B) minus the 8-byte {@link LoRaPacket} header. The module
+     * buffer is 240 B, but in FIXED transmission mode (which both this gateway's
+     * {@link LoRaHAT} and the uBabel firmware use) the transmitter
+     * prepends a 3-byte {@code [destHi][destLo][channel]} routing header that
+     * eats into that budget — so only 237 B of {@code LoRaPacket} reach the air.
+     * A 240-B packet loses its last 3 bytes and the receiver reports a truncated
+     * frame. This MUST match uBabel's {@code LORA_MAX_PAYLOAD_SIZE}
+     * ({@code LORA_MAX_PKT_LENGTH 237 - 8}). A message whose enveloped form
+     * ([destProto][payload]) exceeds this is transparently fragmented; one that
+     * fits is sent verbatim.
      */
-    public static final int FRAME_PAYLOAD_CAPACITY = 232;
+    public static final int FRAME_PAYLOAD_CAPACITY = 229;
 
     /**
      * Maximum user payload (in bytes) a send/broadcast request can carry. With
      * transparent fragmentation this is the fragmented ceiling (up to
      * {@link RadioFragmenter#MAX_FRAGMENTS} frames), not a single-frame limit;
      * a single frame still carries up to {@code FRAME_PAYLOAD_CAPACITY - 2}
-     * (230 B) of user payload with zero overhead.
+     * (227 B) of user payload with zero overhead.
      */
     public static final int MAX_USER_PAYLOAD_BYTES =
             RadioFragmenter.MAX_FRAGMENTS
