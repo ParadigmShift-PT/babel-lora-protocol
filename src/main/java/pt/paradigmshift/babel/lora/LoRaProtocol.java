@@ -6,12 +6,16 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import pt.paradigmshift.babel.lora.notifications.LoRaPacketReceivedNotification;
 import pt.paradigmshift.babel.radio.RadioAddress;
+import pt.paradigmshift.babel.radio.frag.RadioFragmenter;
+import pt.paradigmshift.babel.radio.frag.RadioReassembler;
 import pt.paradigmshift.babel.radio.notifications.RadioSendFailedNotification;
 import pt.paradigmshift.babel.radio.requests.BroadcastRadioPacketRequest;
 import pt.paradigmshift.babel.radio.requests.SendRadioPacketRequest;
 import pt.unl.fct.di.novasys.babel.core.GenericProtocol;
 import pt.unl.fct.di.novasys.babel.exceptions.HandlerRegistrationException;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 
 /**
@@ -27,6 +31,13 @@ import java.util.Properties;
  * <pre>
  *   [ 2 bytes destProto (big-endian) ][ user payload ... ]
  * </pre>
+ *
+ * <h2>Transparent fragmentation</h2>
+ * A message larger than one frame is split by {@link RadioFragmenter} into
+ * fragment frames (marked by a reserved sentinel in the destProto position)
+ * and rebuilt by a {@link RadioReassembler} on receive, so callers send and
+ * receive whole payloads of any size up to {@link #MAX_USER_PAYLOAD_BYTES}. A
+ * message that fits one frame is sent verbatim — zero overhead, unchanged wire.
  *
  * <h2>Inbound notifications</h2>
  * The protocol emits {@link LoRaPacketReceivedNotification}, a subclass of
@@ -59,18 +70,32 @@ public class LoRaProtocol extends GenericProtocol {
     public static final short PROTOCOL_ID = 1100;
 
     /**
-     * Maximum user payload (in bytes) accepted by send/broadcast requests.
-     * Derived from the default E22 buffer size (240 B), minus the 8-byte
-     * {@link LoRaPacket} header and the 2-byte destProto envelope this
-     * protocol adds to every frame.
+     * Radio-payload capacity of a single LoRa frame, in bytes: the default E22
+     * buffer (240 B) minus the 8-byte {@link LoRaPacket} header. A message
+     * whose enveloped form ([destProto][payload]) exceeds this is transparently
+     * fragmented; one that fits is sent verbatim.
      */
-    public static final int MAX_USER_PAYLOAD_BYTES = 230;
+    public static final int FRAME_PAYLOAD_CAPACITY = 232;
+
+    /**
+     * Maximum user payload (in bytes) a send/broadcast request can carry. With
+     * transparent fragmentation this is the fragmented ceiling (up to
+     * {@link RadioFragmenter#MAX_FRAGMENTS} frames), not a single-frame limit;
+     * a single frame still carries up to {@code FRAME_PAYLOAD_CAPACITY - 2}
+     * (230 B) of user payload with zero overhead.
+     */
+    public static final int MAX_USER_PAYLOAD_BYTES =
+            RadioFragmenter.MAX_FRAGMENTS
+                    * (FRAME_PAYLOAD_CAPACITY - RadioFragmenter.FRAGMENT_HEADER_BYTES)
+                    - 2;
 
     private static final int BROADCAST_ADDR = 0xFFFF;
     private static final int DEST_PROTO_BYTES = 2;
 
     private final LoRaHAT hat;
     private final LoRaAddress ownAddress;
+    private final RadioReassembler reassembler = new RadioReassembler();
+    private int txMsgId = 0;
 
     /**
      * @param hat        a fully constructed and initialised {@link LoRaHAT}
@@ -118,28 +143,37 @@ public class LoRaProtocol extends GenericProtocol {
 
     private void transmit(LoRaAddress destination, short destProto,
                           byte[] payload) {
-        if (payload.length > MAX_USER_PAYLOAD_BYTES) {
-            triggerNotification(new RadioSendFailedNotification(
-                    destProto, destination,
-                    "Payload " + payload.length + "B exceeds MTU "
-                            + MAX_USER_PAYLOAD_BYTES + "B"));
-            return;
-        }
-
         byte[] enveloped = new byte[DEST_PROTO_BYTES + payload.length];
         enveloped[0] = (byte) ((destProto >> 8) & 0xFF);
         enveloped[1] = (byte) (destProto & 0xFF);
         System.arraycopy(payload, 0, enveloped, DEST_PROTO_BYTES,
                          payload.length);
 
+        // Transparent fragmentation: a message that fits one frame is sent
+        // verbatim (single-element list); a larger one is split. Callers
+        // never see fragments.
+        List<byte[]> frames;
         try {
-            LoRaPacket packet = new LoRaPacket.Builder()
-                    .origin(ownAddress.getAddress())
-                    .previousHop(ownAddress.getAddress())
-                    .destination(destination.getAddress())
-                    .payload(enveloped)
-                    .build();
-            hat.transmit(packet);
+            frames = RadioFragmenter.fragment(enveloped, FRAME_PAYLOAD_CAPACITY,
+                                              txMsgId++ & 0xFF);
+        } catch (IllegalArgumentException e) {
+            triggerNotification(new RadioSendFailedNotification(
+                    destProto, destination,
+                    "Payload " + payload.length + "B too large: "
+                            + e.getMessage()));
+            return;
+        }
+
+        try {
+            for (byte[] frame : frames) {
+                LoRaPacket packet = new LoRaPacket.Builder()
+                        .origin(ownAddress.getAddress())
+                        .previousHop(ownAddress.getAddress())
+                        .destination(destination.getAddress())
+                        .payload(frame)
+                        .build();
+                hat.transmit(packet);
+            }
         } catch (Exception e) {
             logger.warn("LoRa transmit failed for destProto={} dest={}: {}",
                         destProto, destination, e.toString());
@@ -149,8 +183,20 @@ public class LoRaProtocol extends GenericProtocol {
     }
 
     private void deliverIncoming(LoRaPacket packet) {
-        byte[] enveloped = packet.getPayload();
-        if (enveloped == null || enveloped.length < DEST_PROTO_BYTES) {
+        byte[] framePayload = packet.getPayload();
+        if (framePayload == null) {
+            return;
+        }
+        // Transparent reassembly: a non-fragmented frame returns immediately;
+        // a fragment is buffered (keyed on the origin address) until its
+        // message is complete.
+        Optional<byte[]> assembled =
+                reassembler.offer(packet.getOriginAddr(), framePayload);
+        if (assembled.isEmpty()) {
+            return; // incomplete message — waiting for more fragments
+        }
+        byte[] enveloped = assembled.get();
+        if (enveloped.length < DEST_PROTO_BYTES) {
             // Foreign sender that doesn't speak our envelope — silently drop.
             return;
         }
