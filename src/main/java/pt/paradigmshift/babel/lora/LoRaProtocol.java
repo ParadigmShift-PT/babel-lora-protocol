@@ -70,19 +70,15 @@ public class LoRaProtocol extends GenericProtocol {
     public static final short PROTOCOL_ID = 1100;
 
     /**
-     * Radio-payload capacity of a single LoRa frame, in bytes: the usable E22
-     * frame (237 B) minus the 8-byte {@link LoRaPacket} header. The module
-     * buffer is 240 B, but in FIXED transmission mode (which both this gateway's
-     * {@link LoRaHAT} and the uBabel firmware use) the transmitter
-     * prepends a 3-byte {@code [destHi][destLo][channel]} routing header that
-     * eats into that budget — so only 237 B of {@code LoRaPacket} reach the air.
-     * A 240-B packet loses its last 3 bytes and the receiver reports a truncated
-     * frame. This MUST match uBabel's {@code LORA_MAX_PAYLOAD_SIZE}
-     * ({@code LORA_MAX_PKT_LENGTH 237 - 8}). A message whose enveloped form
-     * ([destProto][payload]) exceeds this is transparently fragmented; one that
-     * fits is sent verbatim.
+     * Radio-payload capacity of a single LoRa frame, in bytes — the largest
+     * {@code lora_frame_t} payload that survives one on-air frame. Sourced from
+     * the driver ({@link LoRaHAT#MAX_FRAME_PAYLOAD_BYTES}) so the FIXED-mode
+     * geometry (240-B buffer − 3-B routing prefix − 8-B header = 229) is defined
+     * once and stays in lockstep with uBabel's {@code LORA_MAX_PAYLOAD_SIZE}.
+     * A message whose enveloped form ([destProto][payload]) exceeds this is
+     * transparently fragmented; one that fits is sent verbatim.
      */
-    public static final int FRAME_PAYLOAD_CAPACITY = 229;
+    public static final int FRAME_PAYLOAD_CAPACITY = LoRaHAT.MAX_FRAME_PAYLOAD_BYTES;
 
     /**
      * Maximum user payload (in bytes) a send/broadcast request can carry. With
@@ -96,7 +92,7 @@ public class LoRaProtocol extends GenericProtocol {
                     * (FRAME_PAYLOAD_CAPACITY - RadioFragmenter.FRAGMENT_HEADER_BYTES)
                     - 2;
 
-    private static final int BROADCAST_ADDR = 0xFFFF;
+    private static final int BROADCAST_ADDR = LoRaPacket.BROADCAST_ADDR;
     private static final int DEST_PROTO_BYTES = 2;
 
     private final LoRaHAT hat;
